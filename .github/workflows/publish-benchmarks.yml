@@ -1,0 +1,90 @@
+name: Publish Benchmarks to GitHub Pages
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+    steps:
+      # Checkout the source repo that contains the scripts.
+      - name: Checkout source repository
+        uses: actions/checkout@v3
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.12'
+
+      - name: Create virtual environment and install dependencies
+        run: |
+          python -m venv venv
+          # Activate the venv.
+          source venv/bin/activate
+          # Upgrade pip and install required packages.
+          pip install --upgrade pip
+          pip install pandas plotly kaleido
+
+      # Run the two scripts to generate HTML outputs.
+      - name: Run scripts to generate HTML files
+        run: |
+          source venv/bin/activate
+          python prompt-comparisons.py --export html
+          python metric-perfs.py  --export html
+
+      # Create a timestamped output directory, move HTML files,
+      # and generate a markdown page that includes the HTML files via Jekyll includes.
+      - name: Create timestamped directory and markdown page
+        id: prepare_output
+        run: |
+          # Create a timestamp variable in the format: year-month-day-hour-minute.
+          TIMESTAMP=$(date +'%Y-%m-%d-%H-%M')
+          echo "TIMESTAMP=$TIMESTAMP" >> $GITHUB_ENV
+          
+          # Create the new output directory under vllm-benchmarks.
+          mkdir -p vllm-benchmarks/$TIMESTAMP
+          
+          # Move the generated HTML output files into the new folder.
+          mv summary_mean_ttft_ms.html vllm-benchmarks/$TIMESTAMP/
+          mv summary_mean_tpot_ms.html vllm-benchmarks/$TIMESTAMP/
+          mv summary_mean_itl_ms.html vllm-benchmarks/$TIMESTAMP/
+          mv bar_chart_prompts_120.html vllm-benchmarks/$TIMESTAMP/
+          mv bar_chart_prompts_1200.html vllm-benchmarks/$TIMESTAMP/
+          mv bar_chart_prompts_2000.html vllm-benchmarks/$TIMESTAMP/
+          mv bar_chart_prompts_2400.html vllm-benchmarks/$TIMESTAMP/
+          mv bar_chart_prompts_3600.html vllm-benchmarks/$TIMESTAMP/
+          mv bar_chart_prompts_4200.html vllm-benchmarks/$TIMESTAMP/
+          
+          # Create the Markdown page that will include the HTML files.
+          cat << 'EOF' > vllm-benchmarks/$TIMESTAMP/index.md
+          {% include summary_mean_ttft_ms.html %}
+          {% include summary_mean_tpot_ms.html %}
+          {% include summary_mean_itl_ms.html %}
+          {% include bar_chart_prompts_120.html %}
+          {% include bar_chart_prompts_1200.html %}
+          {% include bar_chart_prompts_2000.html %}
+          {% include bar_chart_prompts_2400.html %}
+          {% include bar_chart_prompts_3600.html %}
+          {% include bar_chart_prompts_4200.html %}
+          EOF
+
+      - name: Checkout GitHub Pages repository
+        uses: actions/checkout@v3
+        with:
+          repository: nerdalert/nerdalert.github.io
+          token: ${{ secrets.GH_PAGES_TOKEN }}
+          path: pages
+
+      - name: Copy benchmark files to GitHub Pages repo
+        run: |
+          cp -R vllm-benchmarks pages/vllm-benchmarks/
+
+      - name: Commit and push changes to GitHub Pages repo
+        working-directory: pages
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add .
+          # Use the timestamp variable in the commit message.
+          git commit -m "Add benchmark results for timestamp $TIMESTAMP" || echo "No changes to commit"
+          git push
